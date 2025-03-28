@@ -3,8 +3,9 @@ title: "Modern Time Series"
 subtitle: "IAD Days - 2025"
 author: "James Livsey"
 format: 
-  revealjs:
-    self-contained: true
+  revealjs: 
+    embed-resources: true
+    self-contained-math: true 
 # jupyter: python3
 editor: source
 toc: true
@@ -348,7 +349,7 @@ icnsa |>
 
 Some of the variation seen in seasonal data may be due to simple calendar effects.
 
-<img src="Jan-2024.jpeg" style="width:500px;"/> <img src="Jan-2027.jpeg" style="width:500px;"/>
+<img src="graphics/Jan-2024.jpeg" style="width:500px;"/> <img src="graphics/Jan-2027.jpeg" style="width:500px;"/>
 
 ## Trading Day Adjustment
 
