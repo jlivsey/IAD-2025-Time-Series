@@ -1,0 +1,2502 @@
+---
+title: "Modern Time Series"
+subtitle: "IAD Days - 2025"
+author: "James Livsey"
+format: 
+  revealjs:
+    self-contained: true
+# jupyter: python3
+editor: source
+toc: true
+toc-depth: 1
+slide-number: true
+smaller: false
+scrollable: true 
+execute:
+  echo: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE}
+library(forecast)
+library(fpp3)
+library(tidyverse)
+library(tsbox)
+library(zoo)
+library(seasonal)
+library(astsa)
+library(patchwork)
+```
+
+
+```{r, include=FALSE}
+source("setup.R")
+```
+
+
+  # ---- Let's get started: The Basics
+
+## Time Series
+
+Time series data are measurements taken sequentially over time on a variable or variables of interest. Such data are very common and understanding the dynamic nature of time series data is of paramount interest in many fields, particularly for producing forecasts at future times.
+
+## Types of time series
+
+-   Economics and Finance: GDP, stock prices, exchange rates
+-   Official Statistics: Census data, annual survey data
+-   Engineering: Signal processing
+-   Business: Sales figures, production numbers, inventories
+-   Demographic data: Population sizes
+-   Natural Sciences: Astronomical data, seismic events
+-   Environment: Temperature, precipitation, particulate matter
+-   High frequency data: Medical imaging, wearables
+
+## Sampling Frequency
+
+| Data     | Minute | Hour | Day   | Week   | Year     |
+|----------|--------|------|-------|--------|----------|
+| Quarters |        |      |       |        | 4        |
+| Months   |        |      |       |        | 12       |
+| Weeks    |        |      |       |        | 52.18    |
+| Days     |        |      |       | 7      | 365.25   |
+| Hours    |        |      | 24    | 168    | 8766     |
+| Minutes  |        | 60   | 1440  | 10080  | 525960   |
+| Seconds  | 60     | 3600 | 86400 | 604800 | 31557600 |
+
+## Monthly time series
+
+```{r, echo = TRUE}
+plot(AirPassengers)
+```
+
+## half-hourly time series
+
+Half-hourly electricity demand in England and Wales from Monday 5 June 2000 to Sunday 27 August 2000.
+
+```{r, echo = TRUE}
+plot(forecast::taylor)
+```
+
+## Time Series Data in R
+
+A time series can be thought of as a list of numbers (the measurements), along with some information about what times those numbers were recorded (the index). This information can be stored as the following object in R:
+
+-   `ts`: Time Series class in base R
+-   `zoo`: Package for ordered indexed observations
+-   `xts`: Extensible Time Series class, an extension of `zoo`
+-   `tsibble`: Provides a data structure for time series data
+
+## Time Series packages in R
+
+We may utilize the following R packages for analysis:
+
+-   `ts`: Time Series class in base R
+-   `zoo`: Package for ordered indexed observations
+-   `xts`: Extensible Time Series class, an extension of `zoo`
+-   `tsibble`: Provides a data structure for time series data
+-   `timeDate`: Package for handling time and date
+-   `lubridate`: Package for working with dates and times
+-   `tibbletime`: Extension of `tibble` for time-based data
+-   `forecast`: Package for forecasting time series data
+-   `fpp3`: Forecasting Principles and Practice, the third edition
+-   `tidyverse`: A collection of packages for data manipulation and visualization in R
+-   `tsbox`: Provides a set of tools for handling time series in R
+
+## More comprehensive list here
+
+[https://cran.r-project.org/web/views/TimeSeries.html]()
+
+## First look at some data
+
+```{r, echo=TRUE}
+gafa_stock 
+class(gafa_stock)
+
+```
+
+## Filter to find the max
+
+```{r, echo=TRUE}
+gafa_stock %>%
+  group_by(Symbol) %>%
+  filter(Close == max(Close))
+```
+
+# ---- Reading in Data
+
+## Preloaded data in R
+
+Check all preloaded datasets you can use in your active R session
+
+-   `data()`
+
+## Lets do an exercise in R
+
+1.  Google "census bureau time series"
+    -   select "Business and Industry: Time Series / Trend Chart"
+2.  Select Construction spending
+    -   click submit
+3.  Download .txt file via link at top of data table
+
+## Read into R
+
+-   Open file to see first 7 lines are meta data
+
+```{r}
+x = read.csv("~/Downloads/construction_data.csv", 
+               skip = 7)
+head(x)
+str(x)
+```
+
+Notice the column `Period` is poorly named and not a date!
+
+# ---- Dealing with Dates
+
+## Lubridate
+
+[https://lubridate.tidyverse.org]()
+
+-   Easy and fast parsing of date-times: `ymd()`, `ymd_hms`, `dmy()`, `dmy_hms`, `mdy()`
+
+```{r}
+"Jan-2020"
+"Jan-2020" |> class()
+d = lubridate::my("Jan-2020")
+lubridate::my("Jan-2020") |> class()
+```
+
+## Convert string dates to Date format
+
+```{r}
+dat <- x |>
+  rename(time = Period) |>
+  mutate(time = my(time))
+head(dat)
+str(dat)
+```
+
+## Date format
+
+-   Having a date column first now plays nice with the R time series packages
+
+```{r}
+ts_plot(dat)
+as_tsibble(dat) |> autoplot()
+```
+
+## Extracting Dates
+
+Lets try to look at a plot by month.
+
+```{r}
+dat |>
+  mutate(month = month(time)) |> # Add month column
+  filter(!is.na(Value)) |>
+  ggplot(aes(x=time, y=Value, group=month)) +
+  geom_line(aes(col=month)) +
+  facet_grid(month ~ ., scales='free')
+```
+
+## Extracting Dates
+
+The trend is obscuring information. A crude trend filter
+
+```{r}
+crude_trend = stats::filter(dat$Value, c(1/24, rep(1/12, 11), 1/24), sides = 2)
+dat |>
+  mutate(detrend  = Value - crude_trend) |>
+  mutate(month = month(time)) |> # Add month column
+  filter(!is.na(detrend)) |>
+  ggplot(aes(x=time, y=detrend, group=month)) +
+  geom_line(aes(col=month)) +
+  facet_grid(month ~ .)
+```
+
+## `seq()` function in R understands Date objects
+
+```{r}
+seq(from = as.Date("2020-01-01"), 
+    to = as.Date("2020-12-31"), 
+    by = "month")
+seq(from = as.Date("2020-01-01"), 
+    to = as.Date("2020-12-31"), 
+    by = "week")
+```
+
+# ---- Plotting
+
+## tsbox package
+
+-   I prefer to utilize the `tsbox`
+-   [https://docs.ropensci.org/tsbox/]()
+-   Built on a set of converters
+-   all functions start with `ts_`
+
+## tsbox package functionality
+
+```{r}
+#| output-location: slide
+ts_plot(
+  ts_scale(
+    ts_c(
+      mdeaths, 
+      austres, 
+      AirPassengers, 
+      DAX = EuStockMarkets[, 'DAX']
+      )
+    )
+ )
+```
+
+## ffp3 uses `autoplot`
+
+```{r}
+melsyd_economy <- ansett |>
+  filter(Airports == "MEL-SYD", Class == "Economy") |>
+  mutate(Passengers = Passengers/1000)
+autoplot(melsyd_economy, Passengers) +
+  labs(title = "Ansett airlines economy class",
+       subtitle = "Melbourne-Sydney",
+       y = "Passengers ('000)")
+```
+
+## ggplot for tsibble
+
+- I find the tsibble format the most flexible when dealing with multiple time series
+- This works well with `ggplot`
+
+```{r, echo=TRUE}
+gafa_stock
+```
+
+## ggplot
+
+```{r, echo=TRUE}
+ggplot(gafa_stock, aes(x = Date, y = Close, color = Symbol)) +
+  geom_line()
+```
+
+## Facet wrap to see scale better
+
+```{r, echo=TRUE}
+gafa_stock |>
+  ggplot(aes(x=Date, y=Close, group=Symbol)) +
+  geom_line(aes(col=Symbol)) +
+  facet_grid(Symbol ~ ., scales='free')
+```
+
+## Exercise
+
+-  Convert monthly time series to quarterly
+-  Forecasting of Unemployment Insurance Weekly Claims Report
+-  [https://www.dol.gov/ui/data.pdf]()
+
+```{r, echo=FALSE}
+library(fredr)
+fredr_set_key("052142bc981666b4ebcb1c8df98d006b")
+```
+
+```{r}
+#| output-location: slide
+library(fredr)
+# fredr_set_key("your_key_here")
+
+icnsa = fredr(series_id = "ICNSA")
+
+icnsa |> 
+  select(time = date, value) |>
+  ts_dygraphs()
+```
+
+## Look at ICNSA data
+
+```{r, echo=TRUE}
+icnsa
+tail(icnsa)
+```
+
+## Convert ICNSA series to Quarterly
+
+- This is a nice application of `lubridate`
+
+```{r}
+#| output-location: slide
+icnsa |> 
+  mutate(quarter = quarter(date)) |>
+  mutate(year = year(date)) |>
+  group_by(year, quarter) |> 
+  summarise(n = sum(value)) |> 
+  ungroup() |>
+  mutate(date = paste(year, quarter, sep = "-")) |>
+  mutate(date = yq(date)) |>
+  select(date, n) |>
+  ts_plot()
+```
+
+# ---- Transformations and Adjustments
+
+## Types of transformations 
+
+-   Calendar adjustments
+-   Population adjustments
+-   Inflation adjustments
+-   Mathematical transformations
+
+## Calendar Adjustment
+
+Some of the variation seen in seasonal data may be due to simple calendar effects.
+
+<img src="Jan-2024.jpeg" style="width:500px;"/> <img src="Jan-2027.jpeg" style="width:500px;"/>
+
+## Trading Day Adjustment
+
+```{r}
+m = seas(AirPassengers, regression.variables = "td")
+summary(m)
+```
+
+## Population Adjustments
+
+Any data that are affected by population changes can be adjusted to give per-capita data.
+
+```{r}
+global_economy |>
+  filter(Country == "Turkey") |>
+  mutate(gdp_per_capita = GDP/Population) |>
+  ggplot(aes(x = Year, y = gdp_per_capita)) + 
+  geom_line() + 
+  labs(title= "GDP per capita", ylab = "$US")
+```
+
+## Inflation Adjustment
+
+-   Data which are affected by the value of money are best adjusted before modelling.
+
+-   For example, the average cost of a new house will have increased over the last few decades due to inflation. A \$200,000 house this year is not the same as a \$200,000 house twenty years ago.
+
+-   For this reason, financial time series are usually adjusted so that all values are stated in dollar values from a particular year.
+
+    -   For example, the house price data may be stated in year 2000 dollars.
+
+## Inflation Adjustment
+
+-   To make these adjustments, a price index is used.
+-   If $z_t$ denotes the price index and $y_t$ denotes the original house price in year $t$
+-   Then $x_t = \frac{y_t}{z_t} \times z_{2000}$ gives the adjusted house price at year 2000 dollar values.
+-   Price indexes are often constructed by government agencies.
+    -   For consumer goods, a common price index is the Consumer Price Index (or CPI).
+
+## Inflation Adjustment Example
+
+```{r}
+#| output-location: slide
+print_retail <- aus_retail |>
+  filter(Industry == "Newspaper and book retailing") |>
+  group_by(Industry) |>
+  index_by(Year = year(Month)) |>
+  summarise(Turnover = sum(Turnover))
+
+aus_economy <- global_economy |>
+  filter(Code == "AUS")
+
+print_retail |>
+  left_join(aus_economy, by = "Year") |>
+  mutate(Adjusted_turnover = Turnover / CPI * 100) |>
+  pivot_longer(c(Turnover, Adjusted_turnover),
+               values_to = "Turnover") |>
+  mutate(name = factor(name,
+         levels=c("Turnover","Adjusted_turnover"))) |>
+  ggplot(aes(x = Year, y = Turnover)) +
+  geom_line() +
+  facet_grid(name ~ ., scales = "free_y") +
+  labs(title = "Turnover: Australian print media industry",
+       y = "$AU")
+```
+
+## Mathematical transformations
+
+-   The most common mathematical transfomation is `log`
+-   A few versions of logarithmic transformation are given here
+
+```{r, eval=FALSE, echo=TRUE}
+log(x)
+log1p(x)
+log10(x)
+sign(x) * log(abs(x))
+```
+
+# ---- Patterns
+
+## Decomposition
+
+-   Time series data can exhibit a variety of patterns, and it is often helpful to split a time series into several components, each representing an underlying pattern category.
+-   When decomposing a time series, it is sometimes helpful to first transform or adjust the series in order to make the decomposition (and later analysis) as simple as possible. So we will begin by discussing transformations and adjustments.
+
+## Trend
+
+A trend exists when there is a long-term increase or decrease in the data. It does not have to be linear. Sometimes we will refer to a trend as “changing direction”, when it might go from an increasing trend to a decreasing trend. 
+
+## Extracting Trend
+
+-   There are many ways to extract trends
+-   We will cover they theory more in later lectures
+
+```{r}
+trend = ts_trend(AirPassengers)
+ts_plot(ts_c(trend, AirPassengers))
+```
+
+## Extracting Trend
+
+-   For example, this trend looks too smooth!
+
+```{r}
+trend = ts_trend(unemp)
+ts_dygraphs(ts_c(trend, unemp))
+```
+
+## Seasonal
+
+A seasonal pattern occurs when a time series is affected by seasonal factors such as the time of the year or the day of the week. Seasonality is usually of a fixed and known period. 
+
+## Seasonal Plots
+
+```{r}
+#| layout-ncol: 2
+#| fig-cap: 
+#|   - "Plot of Airpassengers series"
+#|   - "Plot Broken up by year"
+
+plot(AirPassengers)
+as_tsibble(AirPassengers) |> gg_season()
+```
+
+## Monthplot
+
+```{r}
+ggmonthplot(diff(AirPassengers))
+```
+
+## Lag plots
+
+Consider `aus_production` dataset
+
+```{r}
+aus_production |>
+  filter(year(Quarter) >= 2000) |>
+  mutate(quarter_int = quarter(Quarter) |> as.factor()) |>
+  ggplot(aes(x = Quarter, y = Beer)) + 
+  geom_line() + 
+  geom_point(aes(color = quarter_int) )
+```
+
+-   A lag plot is a graph showing $y_t$ plotted against $y_{t-k}$ for different values of $k$.
+
+## Lag plots
+
+```{r}
+#| output-location: slide
+recent_production <- aus_production |>
+  filter(year(Quarter) >= 2000)
+recent_production |>
+  gg_lag(Beer, geom = "point") +
+  labs(x = "lag(Beer, k)")
+```
+
+# ---- ARIMA
+
+## ARIMA Model
+
+Autoregressive Integrated Moving Average (ARIMA) models are the most popular parametric models for time series that directly model the autocorrelation structure of the time series based on different values of the parameters in the model
+
+## ARIMA model
+
+$$ X_t = \phi_1 X_{t-1} + \cdots + \phi_p X_{t-p} + \theta_1 \epsilon_{t-1} + \cdots + \theta_q \epsilon_{t-q} + \epsilon_t $$ where $\phi_1, \ldots, \phi_p, \theta_1, \ldots, \theta_q$ are some unknown parameters of the model. There is one more paramter, that is the variance of the noise process, $Var(\epsilon_t) = \sigma^2.$
+
+- The models are usually abbreviated as ARIMA(p,d,q) 
+    * $\mathbf{p}$ stands for the order of the **autoregressive part**, 
+    * $\mathbf{q}$ stands for the order of **moving average** part  
+    * $\mathbf{d}$ stands for the order of integration (**differencing**)
+
+## Seasonal ARIMA = SARIMA
+
+- Easily seen through example SARIMA(1, 0, 1)(1, 0, 1) with periodicity $p = 12$.
+
+$$ X_t = \phi X_{t-1} + \Phi X_{t-12} + \theta \epsilon_{t-1} + \Theta\epsilon_{t-12} + \epsilon_t$$
+
+- The models are usually abbreviated as SARIMA(p,d,q)(P, D, Q) 
+    * $\mathbf{P}$ stands for the order of the **seasonal autoregressive part**, 
+    * $\mathbf{Q}$ stands for the order of **seasonal moving average** part  
+    * $\mathbf{D}$ stands for the order of seasonal integration (**seasonal differencing**)
+
+
+## ARMA requires Stationarity
+
+If $\{X_t\}$ is a **stationary time series**, then for all $s$, the distribution of $(X_t,\dots,X_{t+s})$ does not depend on $t$.
+
+A stationary series is:
+
+-   roughly horizontal
+-   constant variance
+-   no patterns predictable in the long term
+
+## Stationary or not
+
+```{r stationary, echo=FALSE, warning=FALSE, fig.height=4.6, fig.width=10}
+p1 <- gafa_stock |>
+  filter(Symbol == "GOOG", year(Date) == 2015) |>
+  autoplot(Close) +
+  labs(subtitle = "(a) Google closing price", x = "Day", y = " $US")
+
+p2 <- gafa_stock |>
+  filter(Symbol == "GOOG", year(Date) == 2015) |>
+  autoplot(difference(Close)) +
+  labs(subtitle = "(b) Change in google price", x = "Day", y = "$US")
+
+p3 <- as_tsibble(fma::strikes) |>
+  autoplot(value) +
+  labs(subtitle = "(c) Strikes: US",
+       y = "Number of strikes",
+       x = "Year")
+
+p4 <- as_tsibble(fma::hsales) |>
+  autoplot(value) +
+  labs(subtitle = "(d) House sales: US",
+       y = "Number of houses",
+       x = "Month")
+
+p5 <- as_tsibble(fma::eggs) |>
+  autoplot(value) +
+  labs(subtitle = "(e) Egg prices: US",
+       y = "$US (constant prices)",
+       x = "Year")
+
+p6 <- aus_livestock |>
+  filter(State == "Victoria", Animal == "Pigs") |>
+  autoplot(Count) +
+  labs(subtitle = "(f) Pigs slaughtered: Victoria, Australia",
+       y = "Number of pigs",
+       x="Month")
+
+p7 <- pelt |>
+  autoplot(Lynx) +
+  labs(subtitle = "(g) Lynx trapped: Canada",
+       y = "Number of lynx",
+       x = "Year")
+
+p8 <- aus_production |>
+  filter(year(Quarter) %in% 1991:1995) |>
+  autoplot(Beer) +
+  labs(subtitle = "(h) Beer production: Australia",
+       y = "Megalitres",
+       x = "Quarter")
+
+p9 <- aus_production |>
+  autoplot(Gas) +
+  labs(subtitle = "(i) Gas production: Australia",
+       y = "Petajoules",
+       x = "Quarter")
+
+(p1 | p2 | p3) / (p4 | p5 | p6) / (p7 | p8 | p9)
+```
+
+## Stationary or Not
+
+- a, c, e, f and i have obvious trend = Not stationary
+- d, h and i are seasonal = Not stationary
+- b = stationary
+- g looks like it has cycle but it stationary... why?
+
+
+## Differencing and transformations
+
+- Transformations such as log can help make a series stationary
+-   Differencing helps to stabilize the mean.
+-   The differenced series is the change between each observation in the original series: $\Delta X_t = X_t - X_{t-1}$.
+-   The differenced series will have only $T-1$ values since it is not possible to calculate a difference for the first observation.
+
+## Second-order differencing
+
+Occasionally the differenced data will not appear stationary and it may be necessary to difference the data a second time:
+
+$$
+\begin{align*}
+X_{t} & = X_{t} - X_{t - 1} \\
+        & = (X_t - X_{t-1}) - (X_{t-1}-X_{t-2})\\
+        & = X_t - 2X_{t-1} +X_{t-2}.
+\end{align*}
+$$
+
+-   $X_t$ will have $T-2$ values.
+-   In practice, it is almost never necessary to go beyond second-order differences.
+
+## Seasonal differencing
+
+A seasonal difference is the difference between an observation and the corresponding observation from the previous year. $$
+ \Delta_m X_t = X_t - X_{t-m}
+$$ where $m=$ number of seasons.
+
+-   For monthly data $m=12$.
+-   For quarterly data $m=4$.
+-   Seasonally differenced series will have $T-m$ obs.
+
+## Antidiabetic drug sales
+
+```{r, echo=TRUE}
+a10 <- PBS |>
+  filter(ATC2 == "A10") |>
+  summarise(Cost = sum(Cost) / 1e6)
+```
+
+## Antidiabetic drug sales
+
+```{r, echo=TRUE}
+a10 |> autoplot(
+  Cost
+)
+```
+
+## Antidiabetic drug sales
+
+```{r, echo=TRUE}
+a10 |> autoplot(
+  log(Cost)
+)
+```
+
+## Antidiabetic drug sales
+
+```{r, echo=TRUE}
+a10 |> autoplot(
+  log(Cost) |> difference(12)
+)
+```
+
+## Antidiabetic drug sales - SARIMA fit
+
+```{r, echo=TRUE}
+x = log(a10$Cost) |> 
+  difference(12) |>
+  ts(frequency = 12)
+auto.arima(x)
+```
+
+## Corticosteroid drug sales
+
+```{r, echo=FALSE}
+h02 <- PBS |>
+  filter(ATC2 == "H02") |>
+  summarise(Cost = sum(Cost) / 1e6)
+```
+
+```{r, echo=TRUE}
+h02 |> autoplot(
+  Cost
+)
+```
+
+## Corticosteroid drug sales
+
+```{r, echo=TRUE}
+h02 |> autoplot(
+  log(Cost)
+)
+```
+
+## Corticosteroid drug sales
+
+```{r, echo=TRUE}
+h02 |> autoplot(
+  log(Cost) |> difference(12)
+)
+```
+
+## Corticosteroid drug sales
+
+```{r, echo=TRUE}
+h02 |> autoplot(
+  log(Cost) |> difference(12) |> difference(1)
+)
+```
+
+## Corticosteroid drug sales
+
+-   Seasonally differenced series is closer to being stationary.
+-   Remaining non-stationarity can be removed with further first difference.
+
+If $\Delta_{12}X_t = X_t - X_{t-12}$ denotes seasonally differenced series, then differenced seasonally differenced series is
+
+$$
+\begin{align*}
+ \Delta_{12} \Delta \,X_t &= \Delta_{12}(X_t - X_{t-1}) \\
+      &= (X_t - X_{t-12}) - (X_{t-1} - X_{t-13}) \\
+      &= X_t - X_{t-1} - X_{t-12} + X_{t-13}\ 
+\end{align*}
+$$
+
+## Seasonal differencing
+
+When both seasonal and first differences are applied
+
+-   it makes no difference which is done first---the result will be the same.
+-   If seasonality is strong, we recommend that seasonal differencing be done first because sometimes the resulting series will be stationary and there will be no need for further first difference.
+
+It is important that if differencing is used, the differences are interpretable.
+
+
+::: {.hidden}
+$$
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\newcommand\mcy{{\bf y}}
+$$
+:::
+
+```{r, include=FALSE}
+library(forecast)
+library(fpp3)
+library(tidyverse)
+library(tsbox)
+library(zoo)
+library(seasonal)
+library(astsa)
+library(patchwork)
+library(tseries)
+```
+
+```{r, include=FALSE}
+# Set up chunk for all slides
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  cache = TRUE,
+  dev.args = list(pointsize = 11)
+)
+```
+
+# ---- RegARIMA
+
+## RegARIMA setup
+
+- classical regression model with uncorrelated errors
+
+$$ y_t = \beta_0 + \beta_1 x_{1, t} + \cdots + \beta_r x_{r, t} + \epsilon_t $$
+
+- Consider not the regression model where the error term, $x_t$ has some ACVF
+function $\gamma(h)$ following an ARIMA model.
+
+$$ y_t = \sum_{j=1}^{r}\beta_j z_{t, j} + x_t $$
+
+## ARMA Errors
+
+- It is often possible to assume a stationary covariance structure for the error process that corresponds to a linear process and try to find an ARMA representation.
+
+- This amounts to deciding on a $p$ and $q$, but how do we decide?
+
+## Example
+
+```{r}
+par(mfrow=c(3,1)) # plot the data
+plot(cmort, main="Cardiovascular Mortality", xlab="", ylab="") 
+plot(tempr, main="Temperature", xlab="", ylab="")
+plot(part, main="Particulates", xlab="", ylab="")
+```
+
+## Example
+
+```{r}
+pairs(
+  cbind(
+    Mortality=cmort, 
+    Temperature=tempr, 
+    Particulates=part
+  )
+) 
+```
+
+## Example
+
+- Consider model with uncorrelated errors
+
+$$ M_t = 
+\beta_1 + \beta_2 t + \beta_3 T_t + \beta_4 T_t^2 + \beta_5 P_t + \epsilon_t $$
+
+```{r}
+temp = tempr-mean(tempr) # mean center temp
+temp2 = temp^2
+trend = time(cmort) # time
+fit = lm(cmort~ trend + temp + temp2 + part, na.action=NULL) 
+summary(fit) # regression results
+```
+
+## AR and MA behavior
+
+Before we look at the residuals of the model and decide on what type of ACVF
+behavior we see. Let's look at known behavior:
+
+|       | AR(p)                 | MA(q)                     | 
+|-------|-----------------------|---------------------------|
+| ACF   | Tails off             | PACF Cuts off after lag p |
+| PACF  | Cuts off after lag p  | Tails off                 |
+
+
+## Example
+
+```{r}
+tsdisplay(residuals(fit), lag.max = 30)
+```
+
+## Example
+
+- Would have been a mistake to fit an error with uncorrelated residuals
+
+- A plot of the residuals indicates an AR(2) stochastic structure
+
+$$ M_t = 
+\beta_1 + \beta_2 t + \beta_3 T_t + \beta_4 T_t^2 + \beta_5 P_t + x_t $$ 
+
+where 
+
+$$ x_t = \phi_1 x_{t-1} + \phi_2 x_{t-2} + w_t $$
+
+## Example 
+
+- There are many R functions that will fit an ARMA model and allow regressors
+
+```{r}
+regarima_fit <- sarima(cmort, 2,0,0, xreg=cbind(trend,temp,temp2,part), details = FALSE)
+```
+
+## Example: residuals of regARIMA fit
+
+```{r}
+tsdisplay(resid(regarima_fit$fit), lag.max = 30)
+```
+
+## Overall proceedure
+
+1. Run OLS acting as if the errors are uncorrelated
+1. Identify ARMA model(s) for the residuals 
+1. Run WLS (or MLE) on the regression model with ACVF of specified model
+1. Inspect residuals of regARIMA model for whiteness, adjust if needed
+
+## Forecasting Electricity Demand
+
+- Daily electricity demand can be modeled as a function of temperature
+
+- more electricity is used on cold days due to heating and hot days due to air conditioning
+
+- Moderate temperature requires the least amount of electricity
+    * This leads to both linear and non-linear dynamics
+
+
+## Electricity Demand
+
+```{r, echo=FALSE}
+vic_elec_daily <- vic_elec |>
+  filter(year(Time) == 2014) |>
+  index_by(Date = date(Time)) |>
+  summarise(
+    Demand = sum(Demand) / 1e3,
+    Temperature = max(Temperature),
+    Holiday = any(Holiday)
+  ) |>
+  mutate(Day_Type = case_when(
+    Holiday ~ "Holiday",
+    wday(Date) %in% 2:6 ~ "Weekday",
+    TRUE ~ "Weekend"
+  ))
+
+vic_elec_daily |>
+  ggplot(aes(x = Temperature, y = Demand, colour = Day_Type)) +
+  geom_point() +
+  labs(y = "Electricity demand (GW)",
+       x = "Maximum daily temperature")
+```
+
+## Electricity Demand
+
+```{r}
+vic_elec_daily |>
+  pivot_longer(c(Demand, Temperature)) |>
+  ggplot(aes(x = Date, y = value)) +
+  geom_line() +
+  facet_grid(name ~ ., scales = "free_y") + ylab("")
+```
+
+
+## Electricity Demand
+
+```{r}
+fit <- vic_elec_daily |>
+  model(ARIMA(Demand ~ Temperature + I(Temperature^2) +
+                (Day_Type == "Weekday")))
+report(fit)
+```
+
+## Electricity Demand
+
+```{r}
+fit |> gg_tsresiduals()
+```
+
+
+## Electricity Demand
+
+- There is clear heteroscedasticity in the residuals, with higher variance in January and February, and lower variance in May.
+- The model also has some significant autocorrelation in the residuals, and the histogram of the residuals shows long tails.
+- All of these issues with the residuals may affect the coverage of the prediction intervals, but the point forecasts should still be ok.
+
+## Electricity Demand: Forecast
+
+- Using the estimated model we **forecast 14 days ahead**
+- Starting from Thursday 1 January 2015 (a non-work-day being a public holiday for New Years Day).
+- In this case, we could obtain weather forecasts from the weather bureau for the next 14 days. 
+    * But for the sake of illustration, we will use scenario based forecasting where we set the temperature for the next 14 days to a constant 26 degrees.
+- Working day dummy variables are set to known future values.
+
+## Electricity Demand: Forecast
+
+```{r}
+#| output-location: slide
+vic_elec_future <- new_data(vic_elec_daily, 14) |>
+  mutate(
+    Temperature = 26,
+    Holiday = c(TRUE, rep(FALSE, 13)),
+    Day_Type = case_when(
+      Holiday ~ "Holiday",
+      wday(Date) %in% 2:6 ~ "Weekday",
+      TRUE ~ "Weekend"
+    )
+  )
+forecast(fit, vic_elec_future) |>
+  autoplot(vic_elec_daily) +
+  labs(title="Daily electricity demand: Victoria",
+       y="GW")
+```
+
+
+
+::: {.hidden}
+$$
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\newcommand\mcy{{\bf y}}
+$$
+:::
+
+```{r, include=FALSE}
+library(forecast)
+library(fpp3)
+library(tidyverse)
+library(tsbox)
+library(zoo)
+library(seasonal)
+library(astsa)
+library(patchwork)
+library(tseries)
+```
+
+```{r, include=FALSE}
+# Set up chunk for all slides
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  cache = TRUE,
+  dev.args = list(pointsize = 11)
+)
+```
+
+# ---- Useful Predictor variables
+
+## Trend
+
+A linear trend can be modelled by simply using $$x_{1,t} = t$$ as a predictor,
+
+$$y_t = \beta_0 + \beta_1 t + \epsilon_t$$
+
+
+## Dummy variables
+
+- A dummy variable is also known as an “indicator variable”.
+- Example a predictor is a categorical variable taking only two values (e.g., “yes” and “no”)?
+
+    - when forecasting daily sales and you want to take account of whether the day is a public holiday or not.
+    - So the predictor takes value “yes” on a public holiday, and “no” otherwise.
+
+-  a “dummy variable” which takes value 1 corresponding to “yes” and 0 corresponding to “no”.
+
+ - A dummy variable can also be used to account for an outlier in the data.
+
+ - Rather than omit the outlier, a dummy variable removes its effect.
+
+- In this case, the dummy variable takes value 1 for that observation and 0 everywhere else.
+
+
+## Seasonal Dummy variables
+
+|          | d1, t | d2, t | d3, t | d4, t | d5, t | d6, t |
+|----------|-------|-------|-------|-------|-------|-------|
+| Monday   | 1     | 0     | 0     | 0     | 0     | 0     |
+| Tuesday  | 0     | 1     | 0     | 0     | 0     | 0     |
+| Wednesday| 0     | 0     | 1     | 0     | 0     | 0     |
+| Thursday | 0     | 0     | 0     | 1     | 0     | 0     |
+| Friday   | 0     | 0     | 0     | 0     | 1     | 0     |
+| Saturday | 0     | 0     | 0     | 0     | 0     | 1     |
+| Sunday   | 0     | 0     | 0     | 0     | 0     | 0     |
+| Monday   | 1     | 0     | 0     | 0     | 0     | 0     |
+
+## Example: Australian quarterly beer production: 
+
+```{r, echo=FALSE}
+recent_production <- aus_production |>
+  filter(year(Quarter) >= 1992)
+recent_production |>
+  autoplot(Beer) +
+  labs(y = "Megalitres",
+       title = "Australian quarterly beer production")
+```
+
+## Example: Australian quarterly beer production: 
+
+- We can model this data using a regression model with a **linear trend** and **quarterly dummy variables**,
+
+$$y_t = \beta_0 + \beta_1 t + \beta_2 d_{2,t} + \beta_3 d_{3,t} + \beta_4 d_{4,t} + \epsilon_t,$$
+
+- $d_{i,t} = 1$  if  $t$ is in quarter $i$ and 0 otherwise. 
+- The first quarter variable has been omitted, so the coefficients associated with the other quarters are measures of the difference between those quarters and the first quarter.
+
+## Example: Australian quarterly beer production: 
+
+```{r}
+fit_beer <- recent_production |>
+  model(TSLM(Beer ~ trend() + season()))
+report(fit_beer)
+```
+
+- There is an average downward trend of -0.34 megalitres per quarter. 
+- On average, the second quarter has production of 34.7 megalitres lower than the first quarter
+- the third quarter has production of 17.8 megalitres lower than the first quarter
+- the fourth quarter has production of 72.8 megalitres higher than the first quarter.
+
+## Example: Australian quarterly beer production: 
+
+- Plotting fitted values
+
+```{r}
+#| output-location: slide
+augment(fit_beer) |>
+  ggplot(aes(x = Quarter)) +
+  geom_line(aes(y = Beer, colour = "Data")) +
+  geom_line(aes(y = .fitted, colour = "Fitted")) +
+  scale_colour_manual(
+    values = c(Data = "black", Fitted = "#D55E00")
+  ) +
+  labs(y = "Megalitres",
+       title = "Australian quarterly beer production") +
+  guides(colour = guide_legend(title = "Series"))
+```
+
+## Example: Australian quarterly beer production: 
+
+- Plotting actual vs fitted values
+
+```{r}
+#| output-location: slide
+augment(fit_beer) |>
+  ggplot(aes(x = Beer, y = .fitted,
+             colour = factor(quarter(Quarter)))) +
+  geom_point() +
+  labs(y = "Fitted", x = "Actual values",
+       title = "Australian quarterly beer production") +
+  geom_abline(intercept = 0, slope = 1) +
+  guides(colour = guide_legend(title = "Quarter"))
+```
+
+
+## Intervention variables
+
+- Often necessary to model interventions that may have affected the variable to be forecast. 
+    - For example, competitor activity, advertising expenditure, industrial action
+
+
+## Trading Day 
+
+- $x_1$ = number of Mondays in month;
+- $x_2$ = number of Tuesdays in month;
+- $\vdots$
+- $x_7$ = number of Sundays in month.
+
+
+## Distributed lags
+
+- Often useful to include advertising expenditure as a predictor. 
+- The effect of advertising can last beyond the actual campaign
+- Need to include lagged values of advertising expenditure
+
+- $x_1$ = advertising for previous month;
+- $x_2$ = advertising for two months previously;
+- $\vdots$
+- $x_m$ = advertising for $m$ months previously.
+
+
+## Holiday 
+
+Some holidays can move around in the calendar
+
+- Easter
+- Chinese New Year
+- Ramadan
+
+## Fourier series
+
+- Alternative to using seasonal dummy variables
+- Useful for long seasonal periods
+
+If  $m$  is the seasonal period, then the first few Fourier terms are given by:
+
+:::: {.columns}
+
+::: {.column width="50%"}
+- $x_{1,t} = \sin \left( \frac{2 \pi t}{m} \right)$
+- $x_{2,t} = \cos \left( \frac{2 \pi t}{m} \right)$
+- $x_{3,t} = \sin \left( \frac{4 \pi t}{m} \right)$
+:::
+
+::: {.column width="50%"}
+- $x_{4,t} = \cos \left( \frac{4 \pi t}{m} \right)$
+- $x_{5,t} = \sin \left( \frac{6 \pi t}{m} \right)$
+- $x_{6,t} = \cos \left( \frac{6 \pi t}{m} \right)$
+:::
+
+::::
+
+
+
+
+# ---- Smoothing Splines
+
+## Basics before smoothing splines
+
+- An obvious way to smooth data would be to fit a polynomial regression in terms of time.
+
+$$ x_t = \beta_0 + \beta_1 t + \beta_2 t^2 + \beta_3 t^3 + w_t $$
+
+- An extension of polynomial regression is to first divide time $t = 1, \ldots, n$
+into $k$ intervals where $t_1, \ldots, t_k$ are called _knots_. 
+
+  * Fit polynomial regression on each interval. This is called **cubic splines**
+
+## Smoothing Splines
+
+- Minimizes a compromise between the fit and the degree of smoothness given by
+$$ \sum_{t=1}^{n}[x_t - m_t]^2 + \lambda \int (m_t^{\prime\prime})^2 dt $$
+where $m_t$ is a cubic spline with knot at each $t$. $\lambda$ controlls the degree of smoothness
+
+
+## Smoothing spline story time
+
+Think of taking a long drive where $m_t$ is the position of your car at time $t$. In this case, $m_t^{''}$ is instantaneous acceleration/deceleration, and $\int (m_t^{''})^2 \, dt$ is a measure of the total amount of acceleration and deceleration on your trip. A smooth drive would be one where a constant velocity is maintained (i.e., $m_t^{''} = 0$). A choppy ride would be when the driver is constantly accelerating and decelerating, such as beginning drivers tend to do.
+
+If $\lambda = 0$, we don’t care how choppy the ride is, and this leads to $m_t = x_t$, the data, which are not smooth. If $\lambda = \infty$, we insist on no acceleration or deceleration ($m'' = 0$); in this case, our drive must be at constant velocity, $m_t = c + vt$, and consequently very smooth. Thus, $\lambda$ is seen as a trade-off between linear regression (completely smooth) and the data itself (no smoothness). The larger the value of $\lambda$, the smoother the fit.
+
+## Smoothing spline in R
+
+- In R, the smoothing parameter is called `spar` and it is monotonically related to $\lambda$
+
+- type `?smooth.spline` to view the help file for details.
+
+```{r}
+#| output-location: slide
+plot(soi)
+lines(smooth.spline(time(soi), soi, spar=.5), lwd=2, col=4)
+lines(smooth.spline(time(soi), soi, spar= 1), lty=2, lwd=2, col=2)
+```
+
+## Interpolating Missing values
+
+```{r}
+n = 30
+t = 1:n
+c = sin(2*pi*t / 10)
+x = c + rnorm(n)
+plot(x, type = "b")
+lines(c, col = 'grey')
+```
+
+##
+
+- Inject a missing value
+
+```{r}
+x[15] = NA
+plot(x, type = "b")
+abline(v = 15, lty = 'dotted')
+```
+
+##
+
+- fit basic smooth spline, note need to drop NA index
+
+```{r}
+ss = smooth.spline(x = time(x[-15]), y = x[-15]) # auto select spar
+plot(x, type = "b")
+lines(ss, col = 2)
+points(ss$x[15], ss$y[15], col = 2, pch = 19)
+```
+
+## Using `na.spline` from zoo 
+
+- No need to find index of NA values
+
+```{r}
+plot(x, type = "b")
+points(ss$x[15], ss$y[15], col = 2, pch = 19)
+points(na.spline(x), col = 3, pch = 19)
+```
+
+## Simple Exponential Smoothing
+
+Basic Idea
+
+- Naive method 
+
+$$ \widehat{y}_{T+h | T} = y_T $$
+
+- Average Method
+
+$$ \widehat{y}_{T+h | T} = \frac{1}{T} \sum_{t=1}^{T} y_t $$
+
+
+These are both quite extreme forecasts!
+
+
+##
+
+- We often want something between these two extremes. 
+
+- Attach larger weights to more recent observations than to observations from the distant past. 
+
+- This is exactly the concept behind simple **exponential smoothing**
+
+$$
+\widehat{y}_{T+1 | T} 
+= 
+\alpha y_T + \alpha(1-\alpha)y_{T-1} + \alpha(1-\alpha)^2 y_{T-2} + \cdots 
+$$
+
+where $0 \leq \alpha \leq 1$
+
+## 
+
+- We will look at two equivalent forms of simple exponential smoothing
+
+1. Weighted average form
+
+1. Component form
+
+## Weighted average form 
+
+- The forecast at time $T+1$ is equal to a weighted average between the most recent observation $y_T$ and the previous forecast $\widehat{y}_{T|T-1}$
+
+$$
+\hat{y}_{T+1|T} = \alpha y_T + (1-\alpha) \hat{y}_{T|T-1}
+$$
+
+## Component Form
+
+- For simple exponential smoothing, the only component included is the level $\ell_t$
+
+$$
+\begin{align*}
+  \text{Forecast equation}  && \hat{y}_{t+h|t} & = \ell_{t}\\
+  \text{Smoothing equation} && \ell_{t}        & = \alpha y_{t} + (1 - \alpha)\ell_{t-1},
+\end{align*}
+$$
+
+## Optimisation
+
+- For simple exponential smoothing, we need to select the values of $\alpha$ and $\ell_0$.
+
+- the unknown parameters and the initial values for any exponential smoothing method can be estimated by minimising the SSE
+
+$$
+\text{SSE}=\sum_{t=1}^T(y_t - \hat{y}_{t|t-1})^2=\sum_{t=1}^Te_t^2.
+$$
+
+## Adding Trend and Seasonality 
+
+## Holt’s linear trend method {.smaller}
+
+- This method involves a forecast equation and two smoothing equations (one for the level and one for the trend)
+
+$$
+\begin{align*}
+  \text{Forecast equation}&& \hat{y}_{t+h|t} &= \ell_{t} + hb_{t} \\
+  \text{Level equation}   && \ell_{t} &= \alpha y_{t} + (1 - \alpha)(\ell_{t-1} + b_{t-1})\\
+  \text{Trend equation}   && b_{t}    &= \beta^*(\ell_{t} - \ell_{t-1}) + (1 -\beta^*)b_{t-1},
+\end{align*}
+$$
+
+- $\ell_t$  denotes an estimate of the level of the series at time t
+
+- $b_t$ denotes an estimate of the trend (slope) of the series at time t.
+ 
+- $\alpha$ is the smoothing parameter
+
+- $\beta^*$ smoothing parameter for the trend
+
+## Damped trend methods
+
+- This method also includes a damping parameter $0 < \phi < 1$
+
+- If $\phi = 1$ the method is identical to Holt’s linear method
+
+- $\phi$ dampens the trend so that it approaches a constant some time in the future
+
+$$
+\begin{align*}
+  \hat{y}_{t+h|t} &= \ell_{t} + (\phi+\phi^2 + \dots + \phi^{h})b_{t} \\
+  \ell_{t} &= \alpha y_{t} + (1 - \alpha)(\ell_{t-1} + \phi b_{t-1})\\
+  b_{t} &= \beta^*(\ell_{t} - \ell_{t-1}) + (1 -\beta^*)\phi b_{t-1}.
+\end{align*}
+$$
+
+## Example: Australian population
+
+```{r, echo=FALSE}
+aus_economy <- global_economy |>
+  filter(Code == "AUS") |>
+  mutate(Pop = Population / 1e6)
+autoplot(aus_economy, Pop) +
+  labs(y = "Millions", title = "Australian population")
+```
+
+##
+
+- code to fit both Holt's linear trend method and the dampened trend model
+
+```{r}
+#| output-location: slide
+aus_economy |>
+  model(
+    `Holt's method` = ETS(Pop ~ error("A") +
+                       trend("A") + season("N")),
+    `Damped Holt's method` = ETS(Pop ~ error("A") +
+                       trend("Ad", phi = 0.9) + season("N"))
+  ) |>
+  forecast(h = 15) |>
+  autoplot(aus_economy, level = NULL) +
+  labs(title = "Australian population",
+       y = "Millions") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+## Adding Seasonality 
+
+- Holt (1957) and Winters (1960) extended Holt’s method to capture seasonality
+
+- The Holt-Winters seasonal method comprises the forecast equation and three smoothing equations 
+  * one for the level $\ell_t$ (smoothing param $\alpha$)
+  * one for the trend $b_t$ (smoothing param $\beta^*$)
+  * one for the seasonal component $s_t$ (smoothing param $\gamma$)
+  * let $m$ to denote the period of the seasonality
+  
+
+## Additive Holt-Winters Model
+  
+$$
+\begin{align*}
+  \hat{y}_{t+h|t} &= \ell_{t} + hb_{t} + s_{t+h-m(k+1)} \\
+  \ell_{t} &= \alpha(y_{t} - s_{t-m}) + (1 - \alpha)(\ell_{t-1} + b_{t-1})\\
+  b_{t} &= \beta^*(\ell_{t} - \ell_{t-1}) + (1 - \beta^*)b_{t-1}\\
+  s_{t} &= \gamma (y_{t}-\ell_{t-1}-b_{t-1}) + (1-\gamma)s_{t-m},
+\end{align*}
+$$
+
+## Multiplicative Holt-Winters Model
+
+$$
+\begin{align*}
+  \hat{y}_{t+h|t} &= (\ell_{t} + hb_{t})s_{t+h-m(k+1)} \\
+  \ell_{t} &= \alpha \frac{y_{t}}{s_{t-m}} + (1 - \alpha)(\ell_{t-1} + b_{t-1})\\
+  b_{t} &= \beta^*(\ell_{t}-\ell_{t-1}) + (1 - \beta^*)b_{t-1}                \\
+  s_{t} &= \gamma \frac{y_{t}}{(\ell_{t-1} + b_{t-1})} + (1 - \gamma)s_{t-m}.
+\end{align*}
+$$
+
+## Example: Domestic overnight trips in Australia
+
+```{r}
+#| output-location: slide
+aus_holidays <- tourism |>
+  filter(Purpose == "Holiday") |>
+  summarise(Trips = sum(Trips)/1e3)
+fit <- aus_holidays |>
+  model(
+    additive = ETS(Trips ~ error("A") + trend("A") +
+                                                season("A")),
+    multiplicative = ETS(Trips ~ error("M") + trend("A") +
+                                                season("M"))
+  )
+fc <- fit |> forecast(h = "3 years")
+fc |>
+  autoplot(aus_holidays, level = NULL) +
+  labs(title="Australian domestic tourism",
+       y="Overnight trips (millions)") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+## Forecasting
+
+- Point forecasts can be obtained from the models by iterating the equations 
+
+- For example, $\widehat{y}_{T+2|T} = \ell_T + 2b_T$ and so on.
+
+- Using `forecast()` function from **fable** package:
+
+```{r}
+#| output-location: slide
+fit |>
+  forecast(h = 8) |>
+  autoplot(aus_holidays)+
+  labs(title="Australian domestic tourism",
+       y="Overnight trips (millions)")
+```
+
+## Prediction Intervals
+
+- The prediction intervals will differ between models with additive and multiplicative methods
+
+- For most ETS models, a prediction interval can be written as:
+
+$$
+\widehat{y}_{T+h | T} \pm c\sigma_h
+$$
+
+where $c$ depends on coverage probability and $\sigma_h$ is the forecast variance. 
+
+- See Table 9.8 in fpp3 for a list of $\sigma_h$ values for different ETS models. 
+
+
+# ---- State Space Models
+
+## Setup
+
+- The observations $y_t$ depend on the value of an __unobserved__ state $x_t$. 
+
+- We want to make inference about $x_t$
+
+![Diagram of a state space model](graphics/ssf.png)
+
+## State Space model without covariates
+
+State Equation: p-dimensional 
+$$
+x_t = \Phi x_{t-1} + w_t
+$$
+
+Observation Equation: q-dimensional
+$$
+y_t = A_t x_t + v_t
+$$
+
+## State Space model with covariates
+
+- Assume we have an $r$-dimensional vector of covariates $\{ u_t \}$.
+
+State Equation: p-dimensional 
+$$
+x_t = \Phi x_{t-1} + \Upsilon u_t + w_t
+$$
+
+Observation Equation: q-dimensional
+$$
+y_t = A_t x_t + \Gamma u_t + v_t
+$$
+
+## Example: Global Warming
+
+```{r}
+#| output-location: slide
+tsplot(
+  cbind(gtemp_land, gtemp_ocean),
+  spaghetti = TRUE,
+  lwd = 2,
+  pch = 20,
+  type = "o",
+  col = astsa.col(c(4, 2), .5),
+  ylab = "Temperature Deviations",
+  main = "Global Warming"
+)
+legend(
+  "topleft",
+  legend = c("Land Surface", "Sea Surface"),
+  lty = 1,
+  pch = 20,
+  col = c(4, 2),
+  bg = "white"
+)
+```
+
+## Global Warming 
+
+- Here we are observing the same signal with different noises
+
+$$
+y_{t,1} = x_t + v_{t,1} 
+\quad \text{and} \quad
+y_{t,2} = x_t + v_{t,2} 
+$$
+
+- Hence the observation equation is:
+
+$$
+\begin{pmatrix}
+y_{t, 1} \\ y_{t, 2}
+\end{pmatrix} = 
+\begin{pmatrix}
+1 \\ 1
+\end{pmatrix}
+x_t 
++ 
+\begin{pmatrix}
+v_{t, 1} \\ v_{t, 2}
+\end{pmatrix}
+$$
+
+## Global Warming
+
+- The State equation:
+
+$$
+x_t = \delta + x_{t-1} + w_t
+$$
+
+This example has:
+
+- $p = 1$
+- $q = 2$
+- $\Phi = 1$
+- $\Upsilon = \delta$ with $u_t = 1$
+
+## Missing Values
+
+- Suppose we consider the problem of monitoring the level of several biomedical markers after a cancer patient undergoes a bone marrow transplant. 
+- measurements made for 91 days on 
+  * log(white blood count) [WBC]
+  * log(platelet) [PLT]
+  * hematocrit [HCT]
+
+- Approximately 40% of the values are missing, with missing values occurring primarily after the 35th day. 
+
+- “Platelet count at about 100 days post transplant has previously been shown to be a good indicator of subsequent long term survival.”
+
+## Missing Values
+
+```{r}
+tsplot(blood, type='o', col=c(6,4,2), lwd=2, pch=19, cex=1) 
+```
+
+## Missing Values
+
+State Equation:
+
+$$
+\begin{pmatrix}
+x_{t, 1} \\ x_{t, 2} \\ x_{t, 3}
+\end{pmatrix}
+= 
+\begin{pmatrix}
+\phi_{11} & \phi_{12} & \phi_{13} \\
+\phi_{21} & \phi_{22} & \phi_{23} \\
+\phi_{31} & \phi_{32} & \phi_{33} 
+\end{pmatrix}
+\begin{pmatrix}
+x_{t-1, 1} \\ x_{t-1, 2} \\ x_{t-1, 3}
+\end{pmatrix}
++ 
+\begin{pmatrix}
+w_{t, 1} \\ w_{t, 2} \\ w_{t, 3}
+\end{pmatrix}
+$$
+
+Observation Equation:
+
+$$
+y_t = A_t x_t + v_t
+$$
+
+where the $A_t$ matrix is $I$ if day $t$ is observed and $0$ matrix if missing.
+
+## Kalman Filter
+
+Consider the problem of trying to predict $x_t$ from $y_{1:s} = \{y_1, y_2, \ldots, y_s\}$.
+
+If you can put the problem into SSF you can use the Kalman Filter for the following:
+
+- $s < t$ this is **forecasting** or **prediction**
+
+- $s = t$ this is **filtering**
+
+- $s > t$ this is **smoothing**
+
+
+## Local Level Model
+
+State Equation:
+
+$$
+\mu_t = \mu_{t-1} + w_t
+$$
+
+with $w_t \sim N(0, 1)$ and $\mu_0 \sim N(0, 1)$.
+
+Observation Equation: 
+
+$$
+y_t = \mu_t + v_t
+$$
+
+## Local Level Model
+
+```{r}
+# generate data 
+set.seed(1)  
+num = 50
+w   = rnorm(num+1,0,1)
+v   = rnorm(num,0,1)
+mu  = cumsum(w)     # states:  mu[0], mu[1], . . ., mu[50] 
+y   = mu[-1] + v    # obs:  y[1], . . ., y[50]
+ts_plot(cbind(ts(mu), ts(y)))
+```
+
+## Local level model
+
+```{r}
+# filter and smooth (Ksmooth does both)
+mu0 = 0;  sigma0 = 1;  phi = 1;  sQ = 1;  sR = 1   
+ks = Ksmooth(y, A=1, mu0, sigma0, phi, sQ, sR)   
+names(ks)
+```
+
+- s = smoothed
+- p = predicted (forecasted)
+- f = filtered
+
+
+## Local Level Model
+
+```{r}
+#| output-location: slide
+par(mfrow=c(3,1))
+
+tsplot(mu[-1], type='p', col=4, pch=19, ylab=expression(mu[~t]), main="Prediction", ylim=c(-5,10)) 
+  lines(ks$Xp, col=6)
+  lines(ks$Xp+2*sqrt(ks$Pp), lty=6, col=6)
+  lines(ks$Xp-2*sqrt(ks$Pp), lty=6, col=6)
+
+tsplot(mu[-1], type='p', col=4, pch=19, ylab=expression(mu[~t]), main="Filter", ylim=c(-5,10)) 
+  lines(ks$Xf, col=6)
+  lines(ks$Xf+2*sqrt(ks$Pf), lty=6, col=6)
+  lines(ks$Xf-2*sqrt(ks$Pf), lty=6, col=6)
+
+tsplot(mu[-1], type='p', col=4, pch=19, ylab=expression(mu[~t]), main="Smoother", ylim=c(-5,10)) 
+  lines(ks$Xs, col=6)
+  lines(ks$Xs+2*sqrt(ks$Ps), lty=6, col=6)
+  lines(ks$Xs-2*sqrt(ks$Ps), lty=6, col=6)
+```
+
+## MLE on AR(1) with Observational noise
+
+- Parameters are $\phi, \sigma_w, \sigma_v$
+
+- Simulate values with true parameters:
+  * $\phi = .8$
+  * $\sigma^2_w = \sigma^2_v = 1$
+  
+  
+## MLE on AR(1) with Observational noise
+
+```{r}
+set.seed(999)
+num = 100
+N = num+1
+x = sarima.sim(n=N, ar=.8)
+y = ts(x[-1] + rnorm(num,0,1))
+ts_plot(ts_c(x, y))
+```
+
+## MLE on AR(1) with Observational noise
+
+- Seup initial parameter estimates
+
+```{r}
+u = ts.intersect(y, stats::lag(y,-1), stats::lag(y,-2)) 
+varu = var(u)
+coru = cor(u) 
+phi = coru[1,3]/coru[1,2] 
+q = (1-phi^2)*varu[1,2]/phi 
+r = varu[1,1] - q/(1-phi^2) 
+(init.par = c(phi, sqrt(q), sqrt(r))) 
+```
+
+- Create likelikhood function
+
+```{r}
+# Function to evaluate the likelihood 
+Linn = function(para) {
+  phi = para[1]
+  sigw = para[2]
+  sigv = para[3]
+  Sigma0 = (sigw ^ 2) / (1 - phi ^ 2)
+  Sigma0[Sigma0 < 0] = 0
+  kf = Kfilter(y, A = 1, mu0 = 0, Sigma0, phi, sigw, sigv)
+  return(kf$like)
+}
+```
+
+## MLE on AR(1) with Observational noise
+
+- Perform estimation with `optim`
+
+```{r}
+est = optim(
+  init.par,
+  Linn,
+  method = "BFGS",
+  hessian = TRUE
+)      
+SE = sqrt(diag(solve(est$hessian)))
+cbind(estimate=c(phi=est$par[1],sigw=est$par[2],sigv=est$par[3]), SE)
+```
+
+## Fit Global Temp model
+
+- Setup $A_t$ and data
+
+```{r}
+y = cbind(gtemp_land, gtemp_ocean)
+num = nrow(y)
+input = rep(1,num)
+A = matrix(c(1,1), nrow=2)
+mu0 = -.35; Sigma0 = 1;  Phi = 1
+```
+
+- Setup likelihood function 
+
+```{r}
+Linn=function(para){
+  sQ = para[1]      # sigma_w
+  sR1 = para[2]    # 11 element of  sR
+  sR2 = para[3]    # 22 element of sR
+  sR21 = para[4]   # 21 element of sR
+ sR = matrix(c(sR1,sR21,0,sR2), 2)  # put the matrix together
+ drift = para[5]
+ kf = Kfilter(y,A,mu0,Sigma0,Phi,sQ,sR,Ups=drift,Gam=NULL,input)  # NOTE Gamma is set to NULL now (instead of 0)
+ return(kf$like) 
+}
+```
+
+## Fit Global Temp model
+
+- Perform Estimation
+
+```{r}
+init.par = c(.1,.1,.1,0,.05)  # initial values of parameters
+est = optim(
+  init.par,
+  Linn,
+  method = "BFGS",
+  hessian = TRUE
+)
+SE = sqrt(diag(solve(est$hessian))) 
+# Summary of estimation  
+estimate = est$par; u = cbind(estimate, SE)
+rownames(u)=c("sigw","sR11", "sR22", "sR21", "drift")
+u 
+```
+
+## Fit Global Temp model - Results
+
+- Rerun Kalman Filter with final parameter estimates
+
+```{r}
+# Smooth (first set parameters to their final estimates)
+sQ    = est$par[1]  
+sR1  = est$par[2]   
+sR2  = est$par[3]   
+sR21 = est$par[4]  
+sR    = matrix(c(sR1,sR21,0,sR2), 2)
+(R    = sR%*%t(sR))   #  to view the estimated R matrix
+drift = est$par[5]  
+ks    = Ksmooth(y,A,mu0,Sigma0,Phi,sQ,sR,Ups=drift,Gam=NULL,input)  # NOTE Gamma is set to NULL now (instead of 0)
+```
+
+## Fit Global Temp model - Results
+
+```{r}
+#| output-location: slide
+tsplot(
+  y,
+  spag = TRUE,
+  margins = .5,
+  type = 'o',
+  pch = 2:3,
+  col = 4:3,
+  lty = 6,
+  ylab = 'Temperature Deviations'
+)
+xsm  = ts(as.vector(ks$Xs), start = 1850)
+rmse = ts(sqrt(as.vector(ks$Ps)), start = 1850)
+lines(xsm, lwd = 2, col = 6)
+xx = c(time(xsm), rev(time(xsm)))
+yy = c(xsm - 2 * rmse, rev(xsm + 2 * rmse))
+polygon(xx, yy, border = NA, col = gray(.6, alpha = .25))
+```
+
+
+## Structural Models: Overview
+
+- Structural models are component models in which each component may be thought of as explaining a specific type of behavior.
+
+- Models are often some version of the classical time series decomposition of data into **trend**, **seasonal**, and **irregular** components.
+
+- For example, 
+
+$$
+y_t = T_t + S_t + v_t
+$$
+
+## Trend and seasonal in SSF
+
+- Putting a structural component model in SSF can be seen though an example. 
+
+- Consider Johnson & Johnson quarterly earnings
+
+- We pose the following models for the trend and seasonal components:
+
+$$
+T_t = \phi T_{t-1} + w_{t, 1}
+$$
+
+$$
+S_t + S_{t-1} + S_{t-2} + S_{t-3} = w_{t, 2}
+$$
+
+How do we put this in SSF?
+
+## Trend and seasonal in SSF
+
+$$
+y_t = T_t + S_t + v_t
+$$
+
+Observation Equation:
+
+$$
+y_t = 
+\begin{pmatrix}
+1 & 1 & 0 & 0
+\end{pmatrix}
+\begin{pmatrix}
+T_{t} \\ S_{t} \\ S_{t-1} \\ S_{t-2}
+\end{pmatrix}
++ 
+\begin{pmatrix}
+v_{t, 1} \\ v_{t, 2} \\ 0 \\ 0
+\end{pmatrix}
+$$
+
+## Trend and seasonal in SSF {.smaller}
+
+State Equation:
+
+$$
+\begin{pmatrix}
+T_{t} \\ S_{t} \\ S_{t-1} \\ S_{t-2}
+\end{pmatrix}
+= 
+\begin{bmatrix}
+\phi & 0 & 0 & 0 \\
+0 & -1 & -1 & -1 \\
+0 & 1 & 0 & 0 \\
+0 & 0 & 1 & 0
+\end{bmatrix}
+\begin{pmatrix}
+T_{t-1} \\ S_{t-1} \\ S_{t-2} \\ S_{t-3}
+\end{pmatrix}
++
+\begin{pmatrix}
+w_{t, 1} \\ w_{t, 2} \\ 0 \\ 0
+\end{pmatrix}
+$$
+
+where 
+
+$$
+Q = 
+\begin{pmatrix}
+q_{11} & 0 & 0 & 0 \\
+0 & q_{22} & 0 & 0 \\
+0 & 0 & 0 & 0 \\
+0 & 0 & 0 & 0
+\end{pmatrix}
+$$
+
+## Fit model to JJ series
+
+```{r}
+num = length(jj)
+A   = cbind(1,1,0,0) 
+
+# Function to Calculate Likelihood 
+Linn = function(para){
+ Phi = diag(0,4) 
+ Phi[1,1] = para[1] 
+ Phi[2,]=c(0,-1,-1,-1); Phi[3,]=c(0,1,0,0); Phi[4,]=c(0,0,1,0)
+ sQ1 = para[2]; sQ2 = para[3]     # sqrt q11 and sqrt q22
+ sQ  = diag(0,4); sQ[1,1]=sQ1; sQ[2,2]=sQ2
+ sR = para[4]                     # sqrt r11
+ kf = Kfilter(jj, A, mu0, Sigma0, Phi, sQ, sR)
+ return(kf$like)  
+ }
+```
+
+## Fit model to JJ series 
+
+```{r}
+# Initial Parameters 
+mu0      = c(.7,0,0,0) 
+Sigma0   = diag(.04, 4)  
+init.par = c(1.03, .1, .1, .5)   # Phi[1,1], the 2 Qs and R
+
+# Estimation
+est = optim(
+  init.par,
+  Linn,
+  method = "BFGS",
+  hessian = TRUE
+)
+SE  = sqrt(diag(solve(est$hessian)))
+u   = cbind(estimate = est$par, SE)
+rownames(u) = c("Phi11", "sigw1", "sigw2", "sigv")
+u 
+```
+
+## Fit model to JJ series 
+
+```{r}
+#| output-location: slide
+# Smooth
+Phi      = diag(0,4) 
+Phi[1,1] = est$par[1]; Phi[2,]  = c(0,-1,-1,-1) 
+Phi[3,]  = c(0,1,0,0); Phi[4,]  = c(0,0,1,0)
+sQ       = diag(0,4)
+sQ[1,1]  = est$par[2]
+sQ[2,2]  = est$par[3]   
+sR       = est$par[4]   
+ks       = Ksmooth(jj, A, mu0, Sigma0, Phi, sQ, sR)   
+
+# Plots
+Tsm   = ts(ks$Xs[1,,], start=1960, freq=4)
+Ssm   = ts(ks$Xs[2,,], start=1960, freq=4)
+p1    = 3*sqrt(ks$Ps[1,1,]); p2 = 3*sqrt(ks$Ps[2,2,])
+par(mfrow=c(2,1))
+tsplot(Tsm, main='Trend Component', ylab='Trend')
+  xx  = c(time(jj), rev(time(jj)))
+  yy  = c(Tsm-p1, rev(Tsm+p1))
+polygon(xx, yy, border=NA, col=gray(.5, alpha = .3))
+tsplot(jj, main='Data & Trend+Season', ylab='J&J QE/Share', ylim=c(-.5,17))
+  xx  = c(time(jj), rev(time(jj)) )
+  yy  = c((Tsm+Ssm)-(p1+p2), rev((Tsm+Ssm)+(p1+p2)) )
+polygon(xx, yy, border=NA, col=gray(.5, alpha = .3))
+```
+
+## Forecast JJ series 
+
+```{r}
+#| output-location: slide
+# Forecast
+n.ahead = 12
+y       = ts(append(jj, rep(0,n.ahead)), start=1960, freq=4)
+rmspe   = rep(0,n.ahead) 
+x00     = ks$Xf[,,num]
+P00     = ks$Pf[,,num]
+Q       = sQ%*%t(sQ) 
+R       = sR%*%t(sR)
+for (m in 1:n.ahead){
+       xp = Phi%*%x00
+       Pp = Phi%*%P00%*%t(Phi)+Q
+      sig = A%*%Pp%*%t(A)+R
+        K = Pp%*%t(A)%*%(1/sig)
+      x00 = xp 
+      P00 = Pp-K%*%A%*%Pp
+ y[num+m] = A%*%xp
+ rmspe[m] = sqrt(sig) 
+}
+tsplot(y, type='o', main='', ylab='J&J QE/Share', ylim=c(5,30), xlim = c(1975,1984))
+upp  = ts(y[(num+1):(num+n.ahead)]+2*rmspe, start=1981, freq=4)
+low  = ts(y[(num+1):(num+n.ahead)]-2*rmspe, start=1981, freq=4)
+ xx  = c(time(low), rev(time(upp)))
+ yy  = c(low, rev(upp))
+polygon(xx, yy, border=8, col=gray(.5, alpha = .3))
+abline(v=1981, lty=3)
+```
+
+
+# ---- Neural Networks 
+
+## Neural networks
+
+- They allow complex nonlinear relationships between the response variable and its predictors.
+
+- A neural network can be thought of as a network of “neurons” which are organised in layers
+
+- The predictors (or inputs) form the bottom layer, and the forecasts (or outputs) form the top layer. There may also be intermediate layers containing “hidden neurons”.
+
+## Simple Neural Network
+
+![A simple neural network equivalent to a linear regression.](graphics/simple-NN.png)
+
+## Simple NN
+
+- The simplest networks contain no hidden layers and are equivalent to linear regressions. 
+- Previous figure shows the neural network version of a linear regression with four predictors. 
+- The coefficients attached to these predictors are called “weights”. 
+- The forecasts are obtained by a linear combination of the inputs. 
+
+## Simple NN
+
+- The weights are selected in the neural network framework using a “learning algorithm” that minimises a “cost function” such as the MSE. 
+- In this simple example, we can use linear regression which is a much more efficient method of training the model
+
+## Moving to a more complex NN
+
+- Once we add an intermediate layer with hidden neurons, the neural network becomes non-linear. 
+- This is known as a multilayer feed-forward network
+- Each layer of nodes receives inputs from the previous layers.
+
+## 
+
+![A neural network with four inputs and one hidden layer with three hidden neurons.](graphics/single-hidden-layer-NN.png)
+
+## 
+
+- The inputs into each hidden neuron in previous figure are combined linearly to give
+$$
+z_j = b_j + \sum_{i=1}^4 w_{i,j} x_i.
+$$
+
+- In the hidden layer, this is then modified using a nonlinear function such as:
+
+- Sigmoid:
+$$
+s(z) = \frac{1}{1+e^{-z}},
+$$
+- ReLu (rectified linear unit)
+$$
+f(x) = max(0, x)
+$$
+
+## Plots of sigmoid and ReLu functions
+
+```{r, echo=FALSE}
+x = seq(-4, 4, .01)
+sigmoid = 1 / (1 + exp(-x))
+ReLu = pmax(0, x)
+plot(range(x), range(sigmoid, ReLu), type = "n", xlab = "", ylab = "", frame = FALSE, ann = FALSE)
+abline(h = 0, lty = 'dotted')
+abline(v = 0, lty = 'dotted')
+lines(sigmoid~x, col = "tomato")
+lines(ReLu~x, col = 'blue')
+legend("topleft", legend = c("sigmoid", "ReLu"), col = c("tomato", "blue"), lty = 1)
+```
+
+##
+
+- The parameters are “learned” (or estimated) from the data. 
+- The values of the weights are often restricted to prevent them from becoming too large. 
+- The parameter that restricts the weights is known as the *decay parameter*
+    * often set to be equal to 0.1
+    
+##
+
+- The weights take random values to begin with, and these are then updated using the observed data.
+- There is an element of randomness in the predictions produced by a neural network.
+- Therefore, the network is usually trained several times using different random starting points, and the results are averaged.
+- The number of hidden layers, and the number of nodes in each hidden layer, must be specified in advance. 
+- Usually, these would be selected using cross-validation.
+
+
+## Data Setup
+
+![Data Prep](graphics/data-setup.png)
+
+## Neural network autoregression
+
+- With time series data, lagged values of the time series can be used as inputs to a neural network
+    * just as we used lagged values in a AR(p) model
+- This is called a neural network autoregression or _NNAR_ 
+
+## NNAR
+
+- To start, we only consider feed-forward networks with one hidden layer
+    * use the notation NNAR(p, k) to indicate there are p lagged inputs and k nodes in the hidden layer
+    * For example, a NNAR(9,5) model is a neural network with the last nine observations $y_{t-1}, \ldots, y_{t-9}$ used as inputs for forecasting the output $y_t$ and with five neurons in the hidden layer.
+- A NNAR(p, 0) model is equivalent to an ARIMA(p, 0, 0) model, but without the restrictions on the parameters to ensure stationarity.
+
+## Seasonal NNAR
+
+- With seasonal data, it is useful to also add the last observed values from the same season as inputs.
+- An NNAR$(3,1,2)_{12}$ model has inputs $y_{t−1}, y_{t−2}, y_{t−3}$, and $y_{t−12}$, and two neurons in the hidden layer.
+- More generally, an NNAR$(p,P,k)_m$ model has $(y_{t-1},y_{t-2},\dots,y_{t-p},y_{t-m},y_{t-2m},\dots,y_{t-Pm})$ inputs  and k neurons in the hidden layer.
+- A NNAR$(p,P,0)_m$ model is equivalent to an ARIMA$(p,0,0)(P,0,0)_m$ model but without the restrictions on the parameters that ensure stationarity.
+
+## Fitting the model 
+
+- The `NNETAR()` function fits an NNAR$(p,P,k)_m$ model.
+- If the values of p and P are not specified, they are selected automatically.
+- For non-seasonal time series, the default is the optimal number of lags (according to the AIC) for a linear AR(p) model.
+- For seasonal time series, the default values are P=1 and p is chosen from the optimal linear model fitted to the seasonally adjusted data.
+- If k is not specified, it is set to k=(p+P+1)/2 (rounded to the nearest integer).
+
+## Forecasting 
+
+- When it comes to forecasting, the network is applied iteratively.
+- For forecasting one step ahead, we simply use the available historical inputs.
+- For forecasting two steps ahead, we use the one-step forecast as an input, along with the historical data.
+- This process proceeds until we have computed all the required forecasts.
+
+
+## Application - Sunspots 
+
+- The surface of the sun contains magnetic regions that appear as dark spots.
+- These affect the propagation of radio waves, and so telecommunication companies like to predict sunspot activity in order to plan for any future difficulties.
+- Sunspots follow a cycle of length between 9 and 14 years.
+
+## Sunspots 
+
+```{r, echo=FALSE}
+Sunspots = sunspot.year |> as_tsibble()
+ts_plot(Sunspots, title = "Yearly sunspots")
+```
+
+## Sunspots 
+
+```{r, eval=TRUE}
+#fit <- Sunspots |>
+#  model(NNETAR(sqrt(value)))
+fit <- readRDS("fit.rds")
+print(fit)
+```
+```{r, eval=TRUE}
+#| output-location: slide
+fit |>
+  forecast(h = 30) |>
+  autoplot(Sunspots) +
+  labs(x = "Year", y = "Counts", title = "Yearly sunspots")
+```
+
+## Looking at fit
+
+- Here, the last 9 observations are used as predictors, and there are 5 neurons in the hidden layer.
+- The cyclicity in the data has been modeled well.
+- We can also see the asymmetry of the cycles has been captured by the model, where the increasing part of the cycle is steeper than the decreasing part of the cycle.
+- This is one difference between an NNAR model and a linear AR model — while linear AR models can model cyclicity, the modeled cycles are always symmetric.
+
+## Prediction Intervals 
+
+- Unlike most of the methods considered in this book, neural networks are not based on a well-defined stochastic model
+- it is not straightforward to derive prediction intervals 
+- However, we can still compute prediction intervals using simulation where future sample paths are generated using bootstrapped residuals 
+
+## Prediction Intervals
+
+The neural network fitted to the sunspot data can be written as
+
+$$
+y_t = f({\bf y}_{t-1}) + \varepsilon_t
+$$
+
+where ${\bf y}_{t-1} = (y_{t-1},y_{t-2},\dots,y_{t-9})'$
+
+- We can simulate future sample paths of this model iteratively, by randomly generating a value for $\epsilon_t$
+either from a normal distribution, or by resampling from the historical values
+
+## Prediction Intervals
+
+Here is a simulation of 9 possible future sample paths for the sunspot data. Each sample path covers the next 30 years after the observed data.
+
+```{r, eval=TRUE}
+#| output-location: slide
+fit |>
+  generate(times = 9, h = 30) |>
+  autoplot(.sim) +
+  autolayer(Sunspots, value) +
+  theme(legend.position = "none")
+```
+
+##
+
+- If we do this many times, we can get a good picture of the forecast distributions. 
+- This is how the `forecast()` function produces prediction intervals for NNAR models. 
+- The `times` argument in `forecast()` controls how many simulations are done (default 1000). 
+- By default, the errors are drawn from a normal distribution. 
+- The bootstrap argument allows the errors to be “bootstrapped” (i.e., randomly drawn from the historical errors).
+
+# ---- Recurrent Neural Networks and LTSM
+
+## Recurrent NN
+
+- Thought processes build upon their existing knowledge and understanding 
+- They do not start anew with each moment
+- NN cannot do this
+- Recurrent neural networks address this issue. 
+- They are networks with loops in them, allowing information to persist.
+- [http://colah.github.io/posts/2015-08-Understanding-LSTMs/]()
+
+## Recurrent NN
+
+![](graphics/RNN-layer.png)
+
+- $A$ a chunk of neural network
+- $x_t$ input
+- $h_t$ output
+
+## Recurrent NN another way {.smaller}
+
+- These loops make recurrent neural networks seem kind of mysterious. 
+- It turns out that they aren’t all that different than a normal neural network. 
+- A RNN can be thought of as multiple copies of the same network, each passing a message to a successor. 
+
+![](graphics/RNN-unrolled.png)
+
+## RNN
+
+- Sometimes, we only need to look at recent information to perform the present task. 
+- Consider a language model trying to predict the next word based on the previous ones. 
+- For example, "Math is my favorite subject in ________"
+- But there are also cases where we need more context (eg. longer lags) 
+- "I grew up in Buffalo, NY"... "My favorite football team is ________"
+
+
+## RNN
+
+- As the gap grows, RNNs become unable to learn to connect the information.
+
+![](graphics/RNN-memory.png)
+
+## RNN
+
+- In theory, RNNs are capable of handling such “long-term dependencies.” 
+- In practice, RNNs don’t seem to be able to learn them. 
+    - Hochreiter (1991) and Bengio, et al. (1994)
+- Enter LTSM (Long Short Term Memory Networks)
+
+## Long Short Term Memory Networks
+
+- special kind of RNN, capable of learning long-term dependencies
+- LSTMs are explicitly designed to avoid the long-term dependency problem
+- Such models have been found to be very useful in
+    * translation
+    * voice recognition
+    * image captioning
+
+## Recall the standard RNN
+
+![Standard Recurrent NN](graphics/standard-RNN.png)
+
+## LTSM diagram
+
+- LTSM adds complexity within each layer
+- To forget and retain info
+
+![LTSM](graphics/LTSM.png)
+
+## LTSM {.smaller}
+
+- Each yellow box is a *gate* that controls the flow of new information into the system
+    1. Forget Gate
+    1. Input Gate
+    1. Input Modulation gate
+    1. Output Gate
+
+![LTSM](graphics/LTSM.png)
+
+## Some info about the gates {.smaller .scrollable}
+
+1. Forget Gate (f): At forget gate the input is combined with the previous output to generate a fraction between 0 and 1, that determines how much of the previous state need to be preserved (or in other words, how much of the state should be forgotten). This output is then multiplied with the previous state. Note: An activation output of 1.0 means “remember everything” and activation output of 0.0 means “forget everything.” From a different perspective, a better name for the forget gate might be the “remember gate”
+1. Input Gate(i): Input gate operates on the same signals as the forget gate, but here the objective is to decide which new information is going to enter the state of LSTM. The output of the input gate (again a fraction between 0 and 1) is multiplied with the output of tan h block that produces the new values that must be added to previous state. This gated vector is then added to previous state to generate current state
+1. Input Modulation Gate(g): It is often considered as a sub-part of the input gate and much literature on LSTM’s does not even mention it and assume it is inside the Input gate. It is used to modulate the information that the Input gate will write onto the Internal State Cell by adding non-linearity to the information and making the information Zero-mean. This is done to reduce the learning time as Zero-mean input has faster convergence. Although this gate’s actions are less important than the others and are often treated as a finesse-providing concept, it is good practice to include this gate in the structure of the LSTM unit.
+1. Output Gate(o): At output gate, the input and previous state are gated as before to generate another scaling fraction that is combined with the output of tanh block that brings the current state. This output is then given out. The output and state are fed back into the LSTM block.
+
+## Cell State {.smaller}
+
+- A key to LSTMs is the cell state, the horizontal line running through the top of the diagram.
+- The cell state is kind of like a conveyor belt. 
+- It runs straight down the entire chain, with only some minor linear interactions. 
+- It’s very easy for information to just flow along it unchanged.
+
+![](graphics/RNN-cell-state.png)
+
+## Cell State 
+
+- LSTM does have the ability to remove or add information to the cell state
+- This is done with one of the gates.
+- Recall the *sigmoid* activation funtion we discussed previously. 
+    * it takes values between 0 and 1.
+- A value of zero means “let nothing through”
+- A value of one means “let everything through”
+
+## Step-by-Step LSTM Walk Through
+
+1. The first step in our LSTM is to decide what information we’re going to throw away from the cell state. Discussed on previous slides
+1. The next step is to decide what new information we’re going to store in the cell state, done in 2 parts
+    1. First, a sigmoid layer called the “input gate layer” decides which values we’ll update.
+    1. Next, a tanh layer creates a vector of new candidate values, that could be added to the state. 
+    - In the next step, we’ll combine these two to create an update to the state.
+1. we need to decide what we’re going to output. 
+    - A sigmoid layer which decides what parts of the cell state we’re going to output. 
+    - Then, we put the cell state through tanh (to push the values to be between −1 and 1) and multiply it by the output of the sigmoid gate
+
+## Step-by-Step LSTM Walk Through
+
+1. ![](graphics/RNN-steps1.png)
+1. ![](graphics/RNN-steps2.png)
+1. ![](graphics/RNN-steps3.png)
+
+# ---- R packages 
+
+## Keras
+
+Keras is a high-level API to build and train deep learning models. It’s used for fast prototyping, advanced research, and production, with three key advantages:
+
+- User friendly: Keras has a simple, consistent interface optimized for common use cases. It provides clear and actionable feedback for user errors.
+- Modular and composable: Keras models are made by connecting configurable building blocks together, with few restrictions.
+- Easy to extend: Write custom building blocks to express new ideas for research. Create new layers, loss functions, and develop state-of-the-art models.
+
+## Keras in R
+
+- The Keras R interface uses the TensorFlow backend engine by default.
+
+```{r, eval=FALSE}
+install.packages("keras")
+install_keras()
+```
+
+- This will provide you with default CPU-based installations of Keras and TensorFlow. 
+- If you want a more customized installation, see the documentation
+    - e.g. if you want to take advantage of NVIDIA GPUs
+    
+::: {.callout-note}
+Your might need activate your conda environment using conda activate rstudio
+:::
+
+## Some other tips to get Keras running
+
+::: {.callout-note}
+You might need to install `reticulate` and `tensorflow` prior to `keras`
+:::
+
+```{r, eval=FALSE}
+devtools::install_github("rstudio/reticulate")
+
+devtools::install_github("rstudio/tensorflow")
+install_tensorflow()
+```
+
+## reticulate: Interface to 'Python'
+
+- Interface to 'Python' modules, classes, and functions. 
+- When calling into 'Python', R data types are automatically converted to their equivalent 'Python' types. 
+- When values are returned from 'Python' to R they are converted back to R types. 
+
+## reticulate
+
+```{r}
+library(reticulate)
+np <- import("numpy", convert=FALSE)
+(x <- np$arange(1, 9)$reshape(2L, 2L, 2L))
+```
+```{r}
+(y <- py_to_r(x))
+```
+- Remember Python’s print order is different. 
+- The first “rows” (first index values) are grouped together. 
+
+
+    
+## Keras 
+
+- The core data structure of Keras is a **model**, a way to organize layers. 
+- The simplest type of model is the Sequential model, a linear stack of layers.
+
+```{r, eval=FALSE}
+model <- keras_model_sequential() 
+```
+
+- We then add onto our `model` object
+
+## Keras {.smaller}
+
+- Add a densely-connected NN layer to an output
+```{r, eval=FALSE}
+layer_dense()
+```
+
+- Dropout consists in randomly setting a fraction rate of input units to 0 at each update during training time, which helps prevent overfitting.
+```{r, eval=FALSE}
+layer_dropout()
+```
+
+
+- We might add to our model like this:
+```{r, eval=FALSE}
+model %>% 
+  layer_dense(units = 256, activation = 'relu', input_shape = c(784)) %>% 
+  layer_dropout(rate = 0.4) %>% 
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 10, activation = 'softmax')
+```
+
+
+## Keras
+
+```{r, eval=FALSE}
+library(keras)
+
+model_rnn <- keras_model_sequential() %>%
+  layer_simple_rnn(units = 4, input_shape = c(num_timesteps, num_features)) %>%
+  layer_dense(units = 1)
+
+model_rnn %>% compile(
+  optimizer = optimizer_rmsprop(),
+  loss = "mae"
+) #model building
+
+history_rnn <- model_rnn %>% fit(
+  x_train,
+  y_train,
+  batch_siz = 40,
+  epochs = 100,
+  validation_split = 0.2,
+)  #model training
+
+plot(history_rnn)
+```
+
+## References
+
+- Time Series Analysis and Its Appli- cations: With R Examples (5th ed), by R.H. Shumway and D.S. Stoffer.
+- [Forecasting: Principles and Practice (3rd ed), ](https://otexts.com/fpp3/)
+- https://colah.github.io/posts/2015-08-Understanding-LSTMs/
+
+
